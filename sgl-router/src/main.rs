@@ -11,6 +11,7 @@ use sglang_router_rs::{
     metrics::PrometheusConfig,
     server::{self, ServerConfig},
     service_discovery::ServiceDiscoveryConfig,
+    version,
 };
 
 fn parse_prefill_args() -> Vec<(String, Option<u16>)> {
@@ -74,6 +75,7 @@ impl std::fmt::Display for Backend {
 #[derive(Parser, Debug)]
 #[command(name = "sglang-router")]
 #[command(about = "SGLang Router - High-performance request distribution across worker nodes")]
+#[command(version = version::get_version())]
 #[command(long_about = r#"
 SGLang Router - High-performance request distribution across worker nodes
 
@@ -648,6 +650,19 @@ impl CliArgs {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Check for version flags before parsing other args to avoid errors
+    let args: Vec<String> = std::env::args().collect();
+    for arg in &args {
+        if arg == "--version" || arg == "-V" {
+            println!("{}", version::get_version_string());
+            return Ok(());
+        }
+        if arg == "-v" {
+            println!("{}", version::get_short_version_string());
+            return Ok(());
+        }
+    }
+
     let prefill_urls = parse_prefill_args();
 
     let mut filtered_args: Vec<String> = Vec::new();

@@ -6,6 +6,7 @@ from typing import List, Optional
 import setproctitle
 from sglang_router.mini_lb import MiniLoadBalancer
 from sglang_router.router_args import RouterArgs
+from sglang_router.version import get_version_string, get_short_version_string
 
 logger = logging.getLogger("router")
 
@@ -66,6 +67,15 @@ class CustomHelpFormatter(
 
 def parse_router_args(args: List[str]) -> RouterArgs:
     """Parse command line arguments and return RouterArgs instance."""
+    # Check for version flags early
+    if "--version" in args or "-V" in args:
+        print(get_version_string())
+        sys.exit(0)
+
+    if "-v" in args:
+        print(get_short_version_string())
+        sys.exit(0)
+
     parser = argparse.ArgumentParser(
         description="""SGLang Router - High-performance request distribution across worker nodes
 
@@ -98,6 +108,14 @@ Examples:
 
     """,
         formatter_class=CustomHelpFormatter,
+    )
+
+    # Add --version argument
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=get_version_string(),
+        help="Show version information and exit",
     )
 
     RouterArgs.add_cli_args(parser, use_router_prefix=False)
