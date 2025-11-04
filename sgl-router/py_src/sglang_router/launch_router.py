@@ -67,15 +67,6 @@ class CustomHelpFormatter(
 
 def parse_router_args(args: List[str]) -> RouterArgs:
     """Parse command line arguments and return RouterArgs instance."""
-    # Check for version flags early
-    if "--version" in args or "-V" in args:
-        print(get_version_string())
-        sys.exit(0)
-
-    if "-v" in args:
-        print(get_short_version_string())
-        sys.exit(0)
-
     parser = argparse.ArgumentParser(
         description="""SGLang Router - High-performance request distribution across worker nodes
 
@@ -110,12 +101,18 @@ Examples:
         formatter_class=CustomHelpFormatter,
     )
 
-    # Add --version argument
+    # Add version arguments
     parser.add_argument(
         "--version", "-V",
         action="version",
         version=get_version_string(),
-        help="Show version information and exit",
+        help="Show full version information and exit",
+    )
+    parser.add_argument(
+        "-v",
+        action="version",
+        version=get_short_version_string(),
+        help="Show short version information and exit",
     )
 
     RouterArgs.add_cli_args(parser, use_router_prefix=False)
