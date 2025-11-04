@@ -22,10 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:warning=Protobuf compilation completed successfully");
 
     // Read version and project name from pyproject.toml with fallback
-    let version = read_field_from_pyproject("version")
-        .unwrap_or_else(|_| DEFAULT_VERSION.to_string());
-    let project_name = read_field_from_pyproject("name")
-        .unwrap_or_else(|_| DEFAULT_PROJECT_NAME.to_string());
+    let version =
+        read_field_from_pyproject("version").unwrap_or_else(|_| DEFAULT_VERSION.to_string());
+    let project_name =
+        read_field_from_pyproject("name").unwrap_or_else(|_| DEFAULT_PROJECT_NAME.to_string());
     println!("cargo:rustc-env=SGL_ROUTER_VERSION={}", version);
     println!("cargo:rustc-env=SGL_ROUTER_PROJECT_NAME={}", project_name);
 
