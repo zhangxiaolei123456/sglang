@@ -97,11 +97,9 @@ fn read_field_from_pyproject(field: &str) -> Result<String, Box<dyn std::error::
     }
 }
 
-fn get_git_branch() -> Option<String> {
-    let output = Command::new("git")
-        .args(&["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
+/// Execute a command and return its output as a trimmed string
+fn run_command(command: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(command).args(args).output().ok()?;
 
     if output.status.success() {
         String::from_utf8(output.stdout)
@@ -112,73 +110,38 @@ fn get_git_branch() -> Option<String> {
     }
 }
 
-fn get_git_commit() -> Option<String> {
-    let output = Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()?;
+fn get_git_branch() -> Option<String> {
+    run_command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
+}
 
-    if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .map(|s| s.trim().to_string())
-    } else {
-        None
-    }
+fn get_git_commit() -> Option<String> {
+    run_command("git", &["rev-parse", "--short", "HEAD"])
 }
 
 fn get_git_status() -> Option<String> {
     // Check if there are uncommitted changes
-    let output = Command::new("git")
-        .args(&["status", "--porcelain"])
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        if output.stdout.is_empty() {
-            Some("clean".to_string())
-        } else {
-            Some("dirty".to_string())
-        }
+    let output = run_command("git", &["status", "--porcelain"])?;
+    if output.is_empty() {
+        Some("clean".to_string())
     } else {
-        None
+        Some("dirty".to_string())
     }
 }
 
 fn get_rustc_version() -> Option<String> {
-    let output = Command::new("rustc").arg("--version").output().ok()?;
-
-    if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .map(|s| s.trim().to_string())
-    } else {
-        None
-    }
+    run_command("rustc", &["--version"])
 }
 
 fn get_cargo_version() -> Option<String> {
-    let output = Command::new("cargo").arg("--version").output().ok()?;
-
-    if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .map(|s| s.trim().to_string())
-    } else {
-        None
-    }
+    run_command("cargo", &["--version"])
 }
 
 fn get_target_from_rustc() -> Option<String> {
-    let output = Command::new("rustc").args(&["-vV"]).output().ok()?;
-
-    if output.status.success() {
-        let output_str = String::from_utf8(output.stdout).ok()?;
-        for line in output_str.lines() {
-            if line.starts_with("host: ") {
-                if let Some(host) = line.strip_prefix("host: ") {
-                    return Some(host.trim().to_string());
-                }
+    let output_str = run_command("rustc", &["-vV"])?;
+    for line in output_str.lines() {
+        if line.starts_with("host: ") {
+            if let Some(host) = line.strip_prefix("host: ") {
+                return Some(host.trim().to_string());
             }
         }
     }
