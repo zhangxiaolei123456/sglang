@@ -75,7 +75,6 @@ impl std::fmt::Display for Backend {
 #[derive(Parser, Debug)]
 #[command(name = "sglang-router")]
 #[command(about = "SGLang Router - High-performance request distribution across worker nodes")]
-#[command(version = version::get_version())]
 #[command(long_about = r#"
 SGLang Router - High-performance request distribution across worker nodes
 
