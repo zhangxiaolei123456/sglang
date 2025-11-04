@@ -8,7 +8,7 @@ from typing import Optional
 
 
 def _read_field_from_pyproject(field: str) -> Optional[str]:
-    """Read a field from pyproject.toml."""
+    """Read a field from pyproject.toml using TOML parser."""
     # Try to find pyproject.toml relative to this file
     current_file = Path(__file__).resolve()
     # Go up from py_src/sglang_router/version.py to project root
@@ -16,19 +16,46 @@ def _read_field_from_pyproject(field: str) -> Optional[str]:
 
     pyproject_path = project_root / "pyproject.toml"
 
-    if pyproject_path.exists():
-        try:
-            with open(pyproject_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    prefix = f"{field} = "
-                    if line.startswith(prefix):
-                        value_str = (
-                            line.split("=", 1)[1].strip().strip('"').strip("'")
-                        )
-                        return value_str
-        except Exception:
-            pass
+    if not pyproject_path.exists():
+        return None
+
+    try:
+        # Try Python 3.11+ built-in tomllib
+        if sys.version_info >= (3, 11):
+            import tomllib
+
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+                project = data.get("project", {})
+                value = project.get(field)
+                if value is not None:
+                    return str(value)
+        else:
+            # Fallback to tomli for Python 3.8-3.10
+            try:
+                import tomli
+
+                with open(pyproject_path, "rb") as f:
+                    data = tomli.load(f)
+                    project = data.get("project", {})
+                    value = project.get(field)
+                    if value is not None:
+                        return str(value)
+            except ImportError:
+                # If tomli is not available, try toml (pip install toml)
+                try:
+                    import toml
+
+                    with open(pyproject_path, "r", encoding="utf-8") as f:
+                        data = toml.load(f)
+                        project = data.get("project", {})
+                        value = project.get(field)
+                        if value is not None:
+                            return str(value)
+                except ImportError:
+                    pass
+    except Exception:
+        pass
 
     return None
 

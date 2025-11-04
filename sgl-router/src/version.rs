@@ -3,34 +3,34 @@
 //! Provides version information including version number, build time, and Git metadata.
 
 /// Project name from pyproject.toml (set at compile time)
-pub const PROJECT_NAME: &str = env!("SG_ROUTER_PROJECT_NAME");
+pub const PROJECT_NAME: &str = env!("SGL_ROUTER_PROJECT_NAME");
 
 /// Version string from pyproject.toml (set at compile time)
-pub const VERSION: &str = env!("SG_ROUTER_VERSION");
+pub const VERSION: &str = env!("SGL_ROUTER_VERSION");
 
 /// Build time in UTC format (set at compile time)
-pub const BUILD_TIME: &str = env!("SG_ROUTER_BUILD_TIME");
+pub const BUILD_TIME: &str = env!("SGL_ROUTER_BUILD_TIME");
 
 /// Git branch name (set at compile time, "unknown" if not available)
-pub const GIT_BRANCH: &str = env!("SG_ROUTER_GIT_BRANCH");
+pub const GIT_BRANCH: &str = env!("SGL_ROUTER_GIT_BRANCH");
 
 /// Git commit hash (short) (set at compile time, "unknown" if not available)
-pub const GIT_COMMIT: &str = env!("SG_ROUTER_GIT_COMMIT");
+pub const GIT_COMMIT: &str = env!("SGL_ROUTER_GIT_COMMIT");
 
 /// Git repository status (clean/dirty) (set at compile time)
-pub const GIT_STATUS: &str = env!("SG_ROUTER_GIT_STATUS");
+pub const GIT_STATUS: &str = env!("SGL_ROUTER_GIT_STATUS");
 
 /// Rustc version (set at compile time)
-pub const RUSTC_VERSION: &str = env!("SG_ROUTER_RUSTC_VERSION");
+pub const RUSTC_VERSION: &str = env!("SGL_ROUTER_RUSTC_VERSION");
 
 /// Cargo version (set at compile time)
-pub const CARGO_VERSION: &str = env!("SG_ROUTER_CARGO_VERSION");
+pub const CARGO_VERSION: &str = env!("SGL_ROUTER_CARGO_VERSION");
 
 /// Target triple (platform) (set at compile time)
-pub const TARGET_TRIPLE: &str = env!("SG_ROUTER_TARGET_TRIPLE");
+pub const TARGET_TRIPLE: &str = env!("SGL_ROUTER_TARGET_TRIPLE");
 
 /// Build mode (debug/release) (set at compile time)
-pub const BUILD_MODE: &str = env!("SG_ROUTER_BUILD_MODE");
+pub const BUILD_MODE: &str = env!("SGL_ROUTER_BUILD_MODE");
 
 /// Get formatted version information string with structured format
 pub fn get_version_string() -> String {

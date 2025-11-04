@@ -1,5 +1,9 @@
 use std::process::Command;
 
+// Default values for version and project name when pyproject.toml is unavailable
+const DEFAULT_VERSION: &str = "0.0.0";
+const DEFAULT_PROJECT_NAME: &str = "sgl-router";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Only regenerate if the proto file changes
     println!("cargo:rerun-if-changed=src/proto/sglang_scheduler.proto");
@@ -17,44 +21,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:warning=Protobuf compilation completed successfully");
 
-    // Read version and project name from pyproject.toml
-    let version = read_version_from_pyproject("version")?;
-    let project_name = read_version_from_pyproject("name")?;
-    println!("cargo:rustc-env=SG_ROUTER_VERSION={}", version);
-    println!("cargo:rustc-env=SG_ROUTER_PROJECT_NAME={}", project_name);
+    // Read version and project name from pyproject.toml with fallback
+    let version = read_field_from_pyproject("version")
+        .unwrap_or_else(|_| DEFAULT_VERSION.to_string());
+    let project_name = read_field_from_pyproject("name")
+        .unwrap_or_else(|_| DEFAULT_PROJECT_NAME.to_string());
+    println!("cargo:rustc-env=SGL_ROUTER_VERSION={}", version);
+    println!("cargo:rustc-env=SGL_ROUTER_PROJECT_NAME={}", project_name);
 
     // Generate build time (UTC)
     let build_time = chrono::Utc::now()
         .format("%Y-%m-%d %H:%M:%S UTC")
         .to_string();
-    println!("cargo:rustc-env=SG_ROUTER_BUILD_TIME={}", build_time);
+    println!("cargo:rustc-env=SGL_ROUTER_BUILD_TIME={}", build_time);
 
     // Try to get Git branch
     let git_branch = get_git_branch().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=SG_ROUTER_GIT_BRANCH={}", git_branch);
+    println!("cargo:rustc-env=SGL_ROUTER_GIT_BRANCH={}", git_branch);
 
     // Try to get Git commit hash
     let git_commit = get_git_commit().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=SG_ROUTER_GIT_COMMIT={}", git_commit);
+    println!("cargo:rustc-env=SGL_ROUTER_GIT_COMMIT={}", git_commit);
 
     // Try to get Git status (clean/dirty)
     let git_status = get_git_status().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=SG_ROUTER_GIT_STATUS={}", git_status);
+    println!("cargo:rustc-env=SGL_ROUTER_GIT_STATUS={}", git_status);
 
     // Get Rustc version
     let rustc_version = get_rustc_version().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=SG_ROUTER_RUSTC_VERSION={}", rustc_version);
+    println!("cargo:rustc-env=SGL_ROUTER_RUSTC_VERSION={}", rustc_version);
 
     // Get Cargo version
     let cargo_version = get_cargo_version().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=SG_ROUTER_CARGO_VERSION={}", cargo_version);
+    println!("cargo:rustc-env=SGL_ROUTER_CARGO_VERSION={}", cargo_version);
 
     // Get target triple (platform)
     let target_triple = std::env::var("TARGET").unwrap_or_else(|_| {
         // Try to get from rustc if not set
         get_target_from_rustc().unwrap_or_else(|| "unknown".to_string())
     });
-    println!("cargo:rustc-env=SG_ROUTER_TARGET_TRIPLE={}", target_triple);
+    println!("cargo:rustc-env=SGL_ROUTER_TARGET_TRIPLE={}", target_triple);
 
     // Get build mode (debug/release)
     let build_mode = if std::env::var("PROFILE").unwrap_or_default() == "release" {
@@ -62,30 +68,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         "debug"
     };
-    println!("cargo:rustc-env=SG_ROUTER_BUILD_MODE={}", build_mode);
+    println!("cargo:rustc-env=SGL_ROUTER_BUILD_MODE={}", build_mode);
 
     Ok(())
 }
 
-fn read_version_from_pyproject(field: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn read_field_from_pyproject(field: &str) -> Result<String, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string("pyproject.toml")?;
+    let toml: toml::Value = toml::from_str(&content)?;
 
-    // Simple TOML parsing for specified field
-    for line in content.lines() {
-        let line = line.trim();
-        let prefix = format!("{} = ", field);
-        if line.starts_with(&prefix) {
-            let value = line
-                .strip_prefix(&prefix)
-                .ok_or(format!("Failed to parse {} line", field))?
-                .trim();
-            // Remove quotes if present
-            let value = value.trim_matches('"').trim_matches('\'');
-            return Ok(value.to_string());
-        }
+    // Navigate to [project] section
+    let project = toml
+        .get("project")
+        .ok_or("Missing [project] section in pyproject.toml")?;
+
+    // Get the field value
+    let value = project
+        .get(field)
+        .ok_or_else(|| format!("Missing '{}' field in [project] section", field))?;
+
+    // Convert to string
+    match value {
+        toml::Value::String(s) => Ok(s.clone()),
+        toml::Value::Integer(i) => Ok(i.to_string()),
+        toml::Value::Float(f) => Ok(f.to_string()),
+        toml::Value::Boolean(b) => Ok(b.to_string()),
+        _ => Err(format!("Field '{}' is not a string value", field).into()),
     }
-
-    Err(format!("{} not found in pyproject.toml", field).into())
 }
 
 fn get_git_branch() -> Option<String> {
