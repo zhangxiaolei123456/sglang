@@ -594,7 +594,6 @@ class SchedulerPPMixin:
                 if self.cur_batch:
                     server_is_idle = False
                     pp_proxy_tensors = self._pp_recv_proxy_tensors()
-                self._pp_commit_comm_work(send_proxy_work)
                 if self.server_args.pp_async_batch_depth > 0:
                     self._pp_commit_comm_work(work=send_output_work)
                     next_pp_outputs, next_batch_result, d2h_event, send_output_work = (
@@ -607,6 +606,7 @@ class SchedulerPPMixin:
                             pp_outputs,
                         )
                     )
+                self._pp_commit_comm_work(send_proxy_work)
                 if self.cur_batch:
                     result, event = self._pp_launch_batch(
                         mb_id, pp_proxy_tensors, mb_metadata, last_rank_comm_queue
