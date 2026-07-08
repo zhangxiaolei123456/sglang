@@ -1,8 +1,10 @@
+import logging
 from contextlib import nullcontext
 from typing import Optional
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.layers.dp_attention import get_attention_tp_group
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.model_executor.forward_batch_info import (
@@ -23,6 +25,14 @@ from sglang.srt.speculative.dspark_components.dspark_info import (
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import draft_tp_context
+
+logger = logging.getLogger(__name__)
+
+
+def _tensor_head(tensor: Optional[torch.Tensor], limit: int = 8) -> list:
+    if tensor is None or tensor.numel() == 0:
+        return []
+    return tensor.detach().reshape(-1)[:limit].cpu().tolist()
 
 
 class DraftBlockProposer:
@@ -170,6 +180,17 @@ class DraftBlockProposer:
         draft_block_ids[:, 0].copy_(draft_input.bonus_tokens.view(-1))
         draft_positions = positions_2d[:, :gamma].reshape(-1)
         draft_cache_loc = verify_cache_loc_2d[:, :gamma].reshape(-1)
+        if envs.SGLANG_DSPARK_PD_PARITY_DEBUG.get():
+            logger.info(
+                "DSPARK_PARITY draft_anchor rids=%s prefix_lens=%s bonus_tokens=%s "
+                "draft_block_ids=%s draft_positions=%s draft_cache_loc=%s",
+                [getattr(req, "rid", None) for req in batch.reqs],
+                _tensor_head(prefix_lens),
+                _tensor_head(draft_input.bonus_tokens),
+                _tensor_head(draft_block_ids),
+                _tensor_head(draft_positions),
+                _tensor_head(draft_cache_loc),
+            )
 
         draft_owns_embed = hasattr(self.draft_model, "forward_embed")
         draft_input_embeds: Optional[torch.Tensor] = None

@@ -72,6 +72,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _dspark_parity_checksum(tensor: torch.Tensor) -> dict:
+    value = tensor.detach()
+    if value.device.type != "cpu":
+        value = value.float().cpu()
+    else:
+        value = value.float()
+    flat = value.reshape(-1)
+    return {
+        "shape": list(tensor.shape),
+        "sum": float(flat.sum().item()),
+        "norm": float(torch.linalg.vector_norm(flat).item()),
+        "head": flat[: min(4, flat.numel())].tolist(),
+    }
+
+
+def _dspark_parity_head(tensor: torch.Tensor, limit: int = 8) -> list:
+    if tensor is None or tensor.numel() == 0:
+        return []
+    return tensor.detach().reshape(-1)[:limit].cpu().tolist()
+
+
 def should_force_retry(req: Req) -> bool:
     """Test hook to force a request into optimistic prefill retry."""
     retry_prob = envs.SGLANG_TEST_FORCE_OPTIMISTIC_PREFILL_RETRY_PROB.get()
@@ -668,6 +689,18 @@ class SchedulerDisaggregationPrefillMixin:
                             tail_hidden.cpu().clone()
                         )
                         req.prefill_tail_valid_mask = tail_mask.cpu().clone()
+                        if envs.SGLANG_DSPARK_PD_PARITY_DEBUG.get():
+                            logger.info(
+                                "DSPARK_PARITY pd_prefill_send rid=%s "
+                                "output_id=%s extend_len=%s copy_len=%s "
+                                "tail_mask=%s hidden=%s",
+                                getattr(req, "rid", None),
+                                int(next_token_id),
+                                extend_len,
+                                copy_len,
+                                _dspark_parity_head(tail_mask),
+                                _dspark_parity_checksum(tail_hidden),
+                            )
                     else:
                         req.prefill_tail_hidden_states_tensor = None
                         req.prefill_tail_valid_mask = None

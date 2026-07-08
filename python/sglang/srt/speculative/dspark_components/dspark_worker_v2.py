@@ -103,6 +103,31 @@ logger = logging.getLogger(__name__)
 _STS_COLLECT_FLUSH_EVERY: int = 256
 
 
+def _tensor_checksum(tensor: Optional[torch.Tensor]) -> dict:
+    if tensor is None:
+        return {"none": True}
+    if tensor.numel() == 0:
+        return {"shape": list(tensor.shape), "numel": 0}
+    value = tensor.detach()
+    if value.device.type != "cpu":
+        value = value.float().cpu()
+    else:
+        value = value.float()
+    flat = value.reshape(-1)
+    return {
+        "shape": list(tensor.shape),
+        "sum": float(flat.sum().item()),
+        "norm": float(torch.linalg.vector_norm(flat).item()),
+        "head": flat[: min(4, flat.numel())].tolist(),
+    }
+
+
+def _tensor_head(tensor: Optional[torch.Tensor], limit: int = 8) -> list:
+    if tensor is None or tensor.numel() == 0:
+        return []
+    return tensor.detach().reshape(-1)[:limit].cpu().tolist()
+
+
 class DSparkWorkerV2(BaseSpecWorker):
 
     def __init__(
@@ -593,6 +618,18 @@ class DSparkWorkerV2(BaseSpecWorker):
             ctx_lens,
             int(sum(batch.extend_lens)),
         )
+        if envs.SGLANG_DSPARK_PD_PARITY_DEBUG.get():
+            logger.info(
+                "DSPARK_PARITY target_prefill_inject mode=%s rids=%s seq_lens=%s "
+                "next_token_ids=%s positions_head=%s cache_loc_head=%s hidden=%s",
+                self.server_args.disaggregation_mode,
+                [getattr(req, "rid", None) for req in batch.reqs],
+                _tensor_head(batch.seq_lens),
+                _tensor_head(next_token_ids),
+                _tensor_head(positions),
+                _tensor_head(batch.out_cache_loc),
+                _tensor_checksum(logits_output.hidden_states),
+            )
         self._kv_injector.inject_target_hidden(
             target_hidden=logits_output.hidden_states,
             cache_loc=batch.out_cache_loc,
@@ -1066,6 +1103,18 @@ class DSparkWorkerV2(BaseSpecWorker):
         flat_mask = tail_mask.reshape(-1)
         if not bool(flat_mask.any()):
             return
+        if envs.SGLANG_DSPARK_PD_PARITY_DEBUG.get():
+            logger.info(
+                "DSPARK_PARITY pd_decode_inject rids=%s seq_lens=%s "
+                "bonus_tokens=%s valid_counts=%s positions=%s cache_loc=%s hidden=%s",
+                [getattr(req, "rid", None) for req in batch.reqs],
+                _tensor_head(batch.seq_lens),
+                _tensor_head(draft_input.bonus_tokens),
+                _tensor_head(valid_counts),
+                _tensor_head(positions_2d[tail_mask]),
+                _tensor_head(cache_loc_2d[tail_mask]),
+                _tensor_checksum(tail_hidden.reshape(bs * tail_len, -1)[flat_mask]),
+            )
         self._kv_injector.inject_target_hidden(
             target_hidden=tail_hidden.reshape(bs * tail_len, -1)[flat_mask],
             cache_loc=cache_loc_2d.reshape(-1)[flat_mask],
