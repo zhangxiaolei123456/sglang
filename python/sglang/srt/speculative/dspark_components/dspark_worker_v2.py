@@ -922,6 +922,31 @@ class DSparkWorkerV2(BaseSpecWorker):
                 verify_num_draft_tokens=self.verify_num_draft_tokens,
                 gamma=self.gamma,
             )
+        if envs.SGLANG_DSPARK_PD_PARITY_DEBUG.get():
+            logger.info(
+                "DSPARK_PARITY decode_accept mode=%s rids=%s prefix_lens=%s "
+                "verify_lens=%s draft_block_ids=%s draft_tokens=%s bonus=%s "
+                "correct_len=%s cap_trim_lens=%s commit_lens=%s "
+                "new_seq_lens=%s out_tokens=%s folded=%s compact=%s",
+                self.server_args.disaggregation_mode,
+                [getattr(req, "rid", None) for req in batch.reqs],
+                _tensor_head(prefix_lens),
+                (
+                    _tensor_head(layout.verify_lens)
+                    if layout is not None and layout.verify_lens is not None
+                    else []
+                ),
+                _tensor_head(draft_block_ids),
+                _tensor_head(draft_tokens),
+                _tensor_head(bonus),
+                _tensor_head(correct_len),
+                _tensor_head(cap_trim_lens),
+                _tensor_head(commit_lens),
+                _tensor_head(new_seq_lens),
+                _tensor_head(out_tokens),
+                folded_accept,
+                run_compact,
+            )
         if on_publish is not None:
             if confidence is not None:
                 on_publish(
