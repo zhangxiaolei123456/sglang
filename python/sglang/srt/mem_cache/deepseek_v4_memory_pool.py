@@ -1298,8 +1298,6 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         old_swa_mask = kv_cache_cpu.get("swa_mask")
         if old_swa_mask is not None:
             old_swa_mask = old_swa_mask.to(indices.device)
-            if not torch.equal(new_swa_mask, old_swa_mask):
-                raise RuntimeError("SWA mask mismatch during CPU copy restore.")
             row_mask = new_swa_mask[old_swa_mask].cpu()
             swa_indices = mapped_swa_indices[old_swa_mask][row_mask.to(indices.device)]
         else:

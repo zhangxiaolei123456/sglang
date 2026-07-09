@@ -361,7 +361,12 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             return seq_len
 
         page_size = self.token_to_kv_pool_allocator.page_size
-        window_start = max(0, seq_len - window_size)
+        margin = (
+            0
+            if envs.SGLANG_OPT_SWA_EVICT_DROP_PAGE_MARGIN.get()
+            else page_size
+        )
+        window_start = max(0, seq_len - window_size - margin)
         window_start = (window_start // page_size) * page_size
         return seq_len - window_start
 
