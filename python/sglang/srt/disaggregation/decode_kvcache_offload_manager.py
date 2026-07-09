@@ -285,16 +285,6 @@ class DecodeKVCacheOffloadManager:
             ]
             self.token_to_kv_pool_allocator.free(overalloc_indices)
 
-        if (
-            getattr(req, "swa_kv_allocated_len", 0) > 0
-            and hasattr(self.token_to_kv_pool_allocator, "free_swa")
-        ):
-            swa_indices_to_free = self.req_to_token_pool.req_to_token[
-                req.req_pool_idx, : req.swa_kv_allocated_len
-            ]
-            self.token_to_kv_pool_allocator.free_swa(swa_indices_to_free)
-            req.swa_kv_allocated_len = 0
-
         self.req_to_token_pool.free(req)
         self.tree_cache.protected_size_ -= len(req.prefix_indices)
         if req.rid in self.offloaded_state:

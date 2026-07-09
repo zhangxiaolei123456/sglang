@@ -646,8 +646,10 @@ def release_kv_cache(req: Req, tree_cache: BasePrefixCache, is_insert: bool = Tr
             req.mamba_pool_idx = None
         return
 
-    effective_insert = is_insert and not getattr(req, "skip_radix_cache_insert", False)
-    tree_cache.cache_finished_req(req, is_insert=effective_insert)
+    tree_cache.cache_finished_req(
+        req,
+        is_insert=is_insert and not getattr(req, "skip_radix_cache_insert", False),
+    )
 
     # StreamingSession.cache_finished_req handles speculative tail trim
     # and bookkeeping flag sync internally, then sets req_pool_idx = None.
@@ -675,21 +677,6 @@ def release_kv_cache(req: Req, tree_cache: BasePrefixCache, is_insert: bool = Tr
             start_p:end_p
         ]
         tree_cache.token_to_kv_pool_allocator.free(indices_to_free)
-
-    # DFLASH/DSpark SWA-aware decode reserve can bind fewer SWA pages than the
-    # full KV headroom. If the request is not inserted into radix cache, no SWA
-    # page should survive the request release; sweep any SWA-only reserve that
-    # may not be covered by the page-aligned full overalloc free above.
-    if (
-        not effective_insert
-        and getattr(req, "swa_kv_allocated_len", 0) > 0
-        and hasattr(tree_cache.token_to_kv_pool_allocator, "free_swa")
-    ):
-        swa_indices_to_free = tree_cache.req_to_token_pool.req_to_token[
-            req.req_pool_idx, : req.swa_kv_allocated_len
-        ]
-        tree_cache.token_to_kv_pool_allocator.free_swa(swa_indices_to_free)
-        req.swa_kv_allocated_len = 0
     # If the prefix cache doesn't manage mamba states, we must free them here.
     if isinstance(tree_cache.req_to_token_pool, HybridReqToTokenPool) and (
         not tree_cache.supports_mamba()
