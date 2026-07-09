@@ -157,10 +157,14 @@ class DFlashDraftInputV2(SpecInput):
             )
         page_size = batch.token_to_kv_pool_allocator.page_size
         allocator = batch.token_to_kv_pool_allocator
+        is_transient_bootstrap_batch = any(
+            getattr(req, "skip_radix_cache_insert", False) for req in batch.reqs
+        )
         use_swa_aware_reserve = (
             page_size > 1
             and hasattr(allocator, "alloc_full_extend")
             and hasattr(allocator, "alloc_swa_for_tokens")
+            and not is_transient_bootstrap_batch
         )
         nxt_kv_lens_cpu_t = self._prepare_nxt_kv_lens_cpu_buf[:bs]
         committed_seq_lens_sum = 0
