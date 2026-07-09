@@ -2237,6 +2237,65 @@ class UnifiedSWATokenToKVPoolAllocator(SWATokenToKVPoolAllocator):
             return out
         return result
 
+    def full_only_available_size(self) -> int:
+        return self.full_available_size()
+
+    def alloc_full_extend(
+        self,
+        prefix_lens: torch.Tensor,
+        prefix_lens_cpu: torch.Tensor,
+        seq_lens: torch.Tensor,
+        seq_lens_cpu: torch.Tensor,
+        last_loc: torch.Tensor,
+        extend_num_tokens: int,
+    ) -> Optional[torch.Tensor]:
+        """Allocate only the full side and leave SWA pages unbound."""
+        with record_function("UnifiedSWAAlloc.alloc_full_extend"):
+            num_new_pages = get_num_new_pages(
+                seq_lens=seq_lens_cpu,
+                page_size=self.page_size,
+                prefix_lens=prefix_lens_cpu,
+            )
+            need_tokens = num_new_pages * self.page_size
+            fa = self.full_attn_allocator
+            if need_tokens > fa.available_size():
+                if not fa._flush_peer_for_alloc(need_tokens):
+                    return None
+
+            out_indices = fa.alloc_extend(
+                prefix_lens,
+                prefix_lens_cpu,
+                seq_lens,
+                seq_lens_cpu,
+                last_loc,
+                extend_num_tokens,
+                num_new_pages=num_new_pages,
+            )
+            assert out_indices is not None
+            return out_indices
+
+    def alloc_swa_for_tokens(self, full_indices: torch.Tensor) -> bool:
+        """Bind SWA physical pages for the virtual pages backing full_indices."""
+        with record_function("UnifiedSWAAlloc.alloc_swa_for_tokens"):
+            if full_indices is None or full_indices.numel() == 0:
+                return True
+
+            v_pages = torch.unique(
+                full_indices.detach().to(torch.int64) // self.page_size
+            )
+            swa_v2p_pages = self.swa_attn_allocator.virtual_to_physical[v_pages]
+            pages_to_bind = v_pages[swa_v2p_pages == -1]
+            if pages_to_bind.numel() == 0:
+                return True
+
+            need_tokens = int(pages_to_bind.numel()) * self.page_size
+            sa = self.swa_attn_allocator
+            if need_tokens > sa.available_size():
+                if not sa._flush_peer_for_alloc(need_tokens):
+                    return False
+            sa.alloc_with_virtual(pages_to_bind)
+            return True
+
     # -- alloc --
 
     def alloc(self, need_size: int) -> Optional[torch.Tensor]:

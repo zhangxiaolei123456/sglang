@@ -739,6 +739,7 @@ class Req(ReqDllmMixin):
         # For req-level memory management
         self.kv_committed_len = 0
         self.kv_allocated_len = 0
+        self.swa_kv_allocated_len = 0
         self.kv_committed_freed = False
         self.kv_overallocated_freed = False
 
@@ -1486,6 +1487,7 @@ class Req(ReqDllmMixin):
         self.already_computed = 0
         self.kv_allocated_len = 0
         self.kv_committed_len = 0
+        self.swa_kv_allocated_len = 0
         self.kv_committed_freed = False
         self.kv_overallocated_freed = False
         self.swa_evicted_seqlen = 0
@@ -1517,6 +1519,7 @@ class Req(ReqDllmMixin):
         token_to_kv_pool_allocator.load_cpu_copy(
             self.kv_cache_cpu, token_indices, mamba_indices=self.mamba_pool_idx
         )
+        self.swa_kv_allocated_len = self.kv_committed_len
         del self.kv_cache_cpu
 
     def log_time_stats(self):
@@ -2099,6 +2102,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             # update req-level memory management fields
             req.kv_committed_len = seq_len
             req.kv_allocated_len = seq_len
+            req.swa_kv_allocated_len = seq_len
 
             # If input_embeds are available, store them
             if req.input_embeds is not None:
@@ -2471,8 +2475,46 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             total += ceil_align(nxt, page_size) - ceil_align(cur, page_size)
         return total
 
+    def _new_swa_tokens_required_next_decode_spec_v2(self, requests, page_size):
+        """SWA only needs the next verify block, not the full double buffer."""
+        reserve = get_alloc_reserve_per_decode()
+        block_size = get_global_server_args().speculative_num_draft_tokens
+        if block_size is None:
+            return self._new_tokens_required_next_decode_spec_v2(requests, page_size)
+
+        total = 0
+        for r in requests:
+            cur = int(getattr(r, "swa_kv_allocated_len", r.kv_allocated_len))
+            full_target = r.kv_committed_len + reserve
+            swa_target = max(cur, min(full_target, r.kv_committed_len + block_size))
+            total += ceil_align(swa_target, page_size) - ceil_align(cur, page_size)
+        return total
+
     def check_decode_mem(self, selected_indices: Optional[List[int]] = None):
         num_tokens = self.new_tokens_required_next_decode(selected_indices)
+        allocator = self.token_to_kv_pool_allocator
+        use_swa_aware_reserve = (
+            not self.spec_algorithm.is_none()
+            and hasattr(allocator, "full_only_available_size")
+            and hasattr(allocator, "swa_available_size")
+        )
+        if use_swa_aware_reserve:
+            if selected_indices is None:
+                self.maybe_evict_swa()
+            requests = (
+                self.reqs
+                if selected_indices is None
+                else [self.reqs[i] for i in selected_indices]
+            )
+            swa_tokens = self._new_swa_tokens_required_next_decode_spec_v2(
+                requests, allocator.page_size
+            )
+            evict_from_tree_cache(self.tree_cache, max(num_tokens, swa_tokens))
+            return (
+                allocator.full_only_available_size() >= num_tokens
+                and allocator.swa_available_size() >= swa_tokens
+            )
+
         evict_from_tree_cache(self.tree_cache, num_tokens)
         return self.token_to_kv_pool_allocator.available_size() >= num_tokens
 
@@ -2671,6 +2713,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             req.decode_batch_idx += 1
             req.kv_committed_len += 1
             req.kv_allocated_len += 1
+            req.swa_kv_allocated_len += 1
 
         if self.enable_overlap:
             # New-tensor avoids racing model_worker_batch refs queued for

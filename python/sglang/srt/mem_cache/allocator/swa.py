@@ -171,6 +171,72 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
             <= self.swa_attn_allocator.available_size() // self.page_size
         )
 
+    def full_only_available_size(self):
+        return self.full_attn_allocator.available_size()
+
+    def alloc_full_extend(
+        self,
+        prefix_lens: torch.Tensor,
+        prefix_lens_cpu: torch.Tensor,
+        seq_lens: torch.Tensor,
+        seq_lens_cpu: torch.Tensor,
+        last_loc: torch.Tensor,  # last_loc for full layers
+        extend_num_tokens: int,
+    ):
+        assert self.page_size > 1
+
+        num_full_pages = get_num_new_pages(
+            seq_lens=seq_lens_cpu, page_size=self.page_size, prefix_lens=prefix_lens_cpu
+        )
+        if (
+            num_full_pages
+            > self.full_attn_allocator.available_size() // self.page_size
+        ):
+            return None
+
+        alloc_full_indices = self.full_attn_allocator.alloc_extend(
+            prefix_lens,
+            prefix_lens_cpu,
+            seq_lens,
+            seq_lens_cpu,
+            last_loc,
+            extend_num_tokens,
+            num_new_pages=num_full_pages,
+        )
+        assert alloc_full_indices is not None
+        return alloc_full_indices
+
+    def alloc_swa_for_tokens(self, full_indices: torch.Tensor) -> bool:
+        assert self.page_size > 1
+        if full_indices is None or full_indices.numel() == 0:
+            return True
+
+        mapping_indices = self._expand_to_full_pages(full_indices)
+        mapping_indices = mapping_indices.to(torch.int64)
+        already_live = self.full_to_swa_index_mapping[mapping_indices] > 0
+        pages_to_bind = torch.unique(mapping_indices[~already_live] // self.page_size)
+        if pages_to_bind.numel() == 0:
+            return True
+
+        need_tokens = int(pages_to_bind.numel()) * self.page_size
+        if need_tokens > self.swa_attn_allocator.available_size():
+            return False
+
+        swa_indices = self.swa_attn_allocator.alloc(need_tokens)
+        if swa_indices is None:
+            return False
+
+        full_page_tokens = (
+            pages_to_bind[:, None] * self.page_size
+            + torch.arange(
+                self.page_size,
+                dtype=mapping_indices.dtype,
+                device=mapping_indices.device,
+            )[None, :]
+        ).reshape(-1)
+        self.set_full_to_swa_mapping(full_page_tokens, swa_indices)
+        return True
+
     def alloc_extend(
         self,
         prefix_lens: torch.Tensor,
