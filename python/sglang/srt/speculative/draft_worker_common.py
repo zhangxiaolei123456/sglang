@@ -35,6 +35,23 @@ class DraftWorkerBundle(msgspec.Struct, frozen=True):
     resolved_attention_backend: str
 
 
+def resolve_draft_worker_num_tokens(
+    *, server_args: ServerArgs, algo_label: str
+) -> Optional[int]:
+    draft_num_tokens = server_args.speculative_num_draft_tokens
+    if algo_label == "DSPARK":
+        # DSpark target verify uses gamma + 1 rows, but the draft proposer only
+        # forwards gamma query rows. Draft-local attention backends use this
+        # value to build target-verify metadata, so keep the draft copy aligned
+        # with the proposer instead of inheriting the target verify window.
+        draft_num_tokens = (
+            None
+            if server_args.speculative_num_draft_tokens is None
+            else int(server_args.speculative_num_draft_tokens) - 1
+        )
+    return draft_num_tokens
+
+
 def _resolve_draft_attention_backend(
     *, draft_server_args: ServerArgs, algo_label: str
 ) -> str:
@@ -114,6 +131,9 @@ def build_draft_tp_worker(
     draft_backend = _resolve_draft_attention_backend(
         draft_server_args=draft_server_args, algo_label=algo_label
     )
+    draft_num_tokens = resolve_draft_worker_num_tokens(
+        server_args=server_args, algo_label=algo_label
+    )
     # Post-resolution ServerArgs rejects bare assignment; route the draft-copy
     # adjustments through the audited mutation point. The backend fields make
     # the draft worker explicit and self-contained (no further overrides);
@@ -126,6 +146,7 @@ def build_draft_tp_worker(
         decode_attention_backend=None,
         attention_backend=draft_backend,
         context_length=target_model_config.context_len,
+        speculative_num_draft_tokens=draft_num_tokens,
     )
 
     saved_server_args = get_global_server_args()

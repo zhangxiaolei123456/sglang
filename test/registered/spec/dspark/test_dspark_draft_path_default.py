@@ -6,6 +6,8 @@ from sglang.srt.arg_groups.speculative_hook import (
     _target_checkpoint_bundles_dspark_draft,
 )
 from sglang.srt.server_args import ServerArgs
+from sglang.srt.speculative.draft_worker_common import resolve_draft_worker_num_tokens
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -81,6 +83,42 @@ class TestDsparkDraftPathDefaulting(CustomTestCase):
         self.assertEqual(
             server_args.speculative_draft_model_path,
             "deepseek-ai/some-other-dspark-draft",
+        )
+
+
+class TestDsparkDraftWorkerNumTokens(CustomTestCase):
+    def test_dspark_draft_worker_uses_gamma_not_verify_window(self):
+        server_args = ServerArgs(model_path="dummy")
+        server_args.speculative_num_draft_tokens = 8
+        self.assertEqual(
+            resolve_draft_worker_num_tokens(
+                server_args=server_args, algo_label="DSPARK"
+            ),
+            7,
+        )
+
+    def test_dflash_draft_worker_keeps_block_size(self):
+        server_args = ServerArgs(model_path="dummy")
+        server_args.speculative_num_draft_tokens = 8
+        self.assertEqual(
+            resolve_draft_worker_num_tokens(
+                server_args=server_args, algo_label="DFLASH"
+            ),
+            8,
+        )
+
+    def test_dspark_graph_num_tokens_uses_worker_local_value(self):
+        self.assertEqual(
+            SpeculativeAlgorithm.DSPARK.get_num_tokens_per_bs_for_target_verify(
+                8, is_draft_worker=False
+            ),
+            8,
+        )
+        self.assertEqual(
+            SpeculativeAlgorithm.DSPARK.get_num_tokens_per_bs_for_target_verify(
+                7, is_draft_worker=True
+            ),
+            7,
         )
 
 
