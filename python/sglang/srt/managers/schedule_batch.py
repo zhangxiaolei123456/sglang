@@ -2490,6 +2490,19 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             total += ceil_align(swa_target, page_size) - ceil_align(cur, page_size)
         return total
 
+    def _swa_decode_headroom_tokens(self, allocator) -> int:
+        """SWA high-watermark headroom used by decode memory checks."""
+        watermark = envs.SGLANG_SWA_DECODE_MEMORY_USAGE_HIGH_WATERMARK.get()
+        if watermark is None or watermark <= 0 or watermark >= 1:
+            return 0
+
+        size_swa = getattr(allocator, "size_swa", None)
+        if size_swa is None or size_swa <= 0:
+            return 0
+
+        page_size = getattr(allocator, "page_size", 1)
+        return ceil_align(int(size_swa * (1 - watermark)), page_size)
+
     def check_decode_mem(self, selected_indices: Optional[List[int]] = None):
         num_tokens = self.new_tokens_required_next_decode(selected_indices)
         allocator = self.token_to_kv_pool_allocator
@@ -2510,9 +2523,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                 requests, allocator.page_size
             )
             evict_from_tree_cache(self.tree_cache, max(num_tokens, swa_tokens))
+            swa_headroom_tokens = self._swa_decode_headroom_tokens(allocator)
             return (
                 allocator.full_only_available_size() >= num_tokens
-                and allocator.swa_available_size() >= swa_tokens
+                and allocator.swa_available_size()
+                >= swa_tokens + swa_headroom_tokens
             )
 
         evict_from_tree_cache(self.tree_cache, num_tokens)
@@ -2941,7 +2956,24 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             )
 
             eviction_interval = max(1, envs.SGLANG_SWA_EVICTION_INTERVAL.get())
-            swa_maintenance_step = (self.forward_iter or 0) % eviction_interval == 0
+            swa_pressure_threshold = envs.SGLANG_SWA_EVICTION_PRESSURE_THRESHOLD.get()
+            swa_under_pressure = False
+            allocator = self.token_to_kv_pool_allocator
+            if (
+                swa_pressure_threshold is not None
+                and 0 < swa_pressure_threshold < 1
+                and hasattr(allocator, "swa_available_size")
+                and hasattr(allocator, "size_swa")
+                and allocator.size_swa > 0
+            ):
+                swa_used = allocator.size_swa - allocator.swa_available_size()
+                swa_under_pressure = (
+                    swa_used >= int(allocator.size_swa * swa_pressure_threshold)
+                )
+            swa_maintenance_step = (
+                (self.forward_iter or 0) % eviction_interval == 0
+                or swa_under_pressure
+            )
             for idx, req in enumerate(self.reqs):
                 if self.forward_mode.is_decode():
                     # We set evict_swa condition here with two reasons:

@@ -407,6 +407,14 @@ class Envs:
     SGLANG_DISAGGREGATION_BOOTSTRAP_ENTRY_CLEANUP_INTERVAL = EnvInt(120)
     # Decode batches between SWA out-of-window evictions.
     SGLANG_SWA_EVICTION_INTERVAL = EnvInt(128)
+    # Force SWA out-of-window eviction once physical SWA usage reaches this
+    # ratio. This keeps long-context decode from sitting at the interval-bound
+    # peak for many iterations.
+    SGLANG_SWA_EVICTION_PRESSURE_THRESHOLD = EnvFloat(0.98)
+    # Decode memory checks keep at least this much SWA headroom. If SWA usage is
+    # above the watermark, decode retraction can reduce concurrency even when
+    # the next step does not allocate a new SWA page.
+    SGLANG_SWA_DECODE_MEMORY_USAGE_HIGH_WATERMARK = EnvFloat(0.98)
     # For non-streaming requests, the scheduler still flushes intermediate
     # output batches to the tokenizer manager every N decoded tokens so that
     # `first_token_time`/TTFT can be recorded. Lower this (e.g. to 1) to get
