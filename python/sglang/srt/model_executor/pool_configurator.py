@@ -582,11 +582,11 @@ class DSV4PoolConfigurator(MemoryPoolConfigurator):
         if envs.SGLANG_OPT_USE_ONLINE_COMPRESS.get():
             allow_experimental_online_c128_mtp = (
                 envs.SGLANG_EXPERIMENTAL_ONLINE_C128_MTP.get()
-                and mr.spec_algorithm.is_eagle()
+                and (mr.spec_algorithm.is_eagle() or mr.spec_algorithm.is_dspark())
             )
             assert mr.spec_algorithm.is_none() or allow_experimental_online_c128_mtp, (
                 "SGLANG_OPT_USE_ONLINE_COMPRESS does not support speculative decode "
-                "(MTP) yet, except the experimental EAGLE topk=1 path gated by "
+                "(MTP) yet, except the experimental EAGLE/DSpark paths gated by "
                 "SGLANG_EXPERIMENTAL_ONLINE_C128_MTP=1"
             )
             if allow_experimental_online_c128_mtp:
@@ -594,9 +594,21 @@ class DSV4PoolConfigurator(MemoryPoolConfigurator):
                     "SGLANG_EXPERIMENTAL_ONLINE_C128_MTP requires "
                     "speculative_num_draft_tokens to be set."
                 )
+                if mr.spec_algorithm.is_dspark():
+                    from sglang.srt.speculative.ragged_verify import (
+                        RaggedVerifyMode,
+                        read_ragged_verify_mode,
+                    )
+
+                    if read_ragged_verify_mode() is not RaggedVerifyMode.STATIC:
+                        logger.warning(
+                            "DSV4 compressed attention: online c128 MTP with DSpark "
+                            "requires fixed-token verify semantics. DSpark ragged "
+                            "verify will be disabled for this run."
+                        )
                 logger.warning(
                     "DSV4 compressed attention: experimental online c128 + MTP enabled "
-                    f"(EAGLE topk=1 only, "
+                    f"(EAGLE topk=1 or DSpark fixed verify only, "
                     f"draft_banks={self.online_c128_mtp_max_draft_tokens}). "
                     "Validate correctness carefully."
                 )

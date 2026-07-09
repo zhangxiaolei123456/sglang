@@ -126,6 +126,18 @@ class DSparkVerifyPlanner:
                 )
 
         self._ragged_verify_mode = read_ragged_verify_mode()
+        if (
+            envs.SGLANG_OPT_USE_ONLINE_COMPRESS.get()
+            and envs.SGLANG_EXPERIMENTAL_ONLINE_C128_MTP.get()
+            and self._ragged_verify_mode is not RaggedVerifyMode.STATIC
+        ):
+            if tp_rank == 0:
+                logger.warning(
+                    "DSpark ragged verify is disabled because online c128 MTP "
+                    "commits a fixed number of target verify tokens. Running "
+                    "DSpark with static verify for this process."
+                )
+            self._ragged_verify_mode = RaggedVerifyMode.STATIC
         self._schedule_cfg = DSparkScheduleConfig(gamma=self.gamma)
         self._budget_planner: Optional[HostConfidenceBudgetPlanner] = None
         self._dynamic_graph_tier = False

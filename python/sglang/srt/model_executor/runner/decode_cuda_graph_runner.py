@@ -122,6 +122,11 @@ if TYPE_CHECKING:
 def ragged_verify_full_mode_enabled(spec_algorithm: SpeculativeAlgorithm) -> bool:
     if not spec_algorithm.is_dspark():
         return False
+    if (
+        envs.SGLANG_OPT_USE_ONLINE_COMPRESS.get()
+        and envs.SGLANG_EXPERIMENTAL_ONLINE_C128_MTP.get()
+    ):
+        return False
     try:
         from sglang.srt.speculative.ragged_verify import (
             ragged_verify_compact_enabled,

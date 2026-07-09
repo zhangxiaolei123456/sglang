@@ -625,7 +625,12 @@ class DeepseekV4AttnBackend(
         )
         self.topk = model_runner.server_args.speculative_eagle_topk or 0
         assert self.topk in [0, 1], "MTP Topk > 1 not supported for DeepSeek V4"
-        self.mtp_enabled = self.topk > 0
+        is_dspark_target = bool(
+            not getattr(model_runner, "is_draft_worker", False)
+            and model_runner.spec_algorithm is not None
+            and model_runner.spec_algorithm.is_dspark()
+        )
+        self.mtp_enabled = self.topk > 0 or is_dspark_target
         self.speculative_num_steps = speculative_num_steps
         self.speculative_num_draft_tokens: int = (
             model_runner.server_args.speculative_num_draft_tokens
@@ -657,17 +662,14 @@ class DeepseekV4AttnBackend(
         layout = _resolve_ragged_verify_layout(forward_batch)
         if layout is None:
             return None
+        if self.online_c128_mtp.enabled():
+            return None
         if _ragged_verify_mode() != RAGGED_VERIFY_COMPACT:
             return None
         if get_parallel().attn_cp_size > 1:
             raise NotImplementedError(
                 "DSV4 ragged verify does not support context parallel (CP); "
                 "set SGLANG_RAGGED_VERIFY_MODE off for CP runs."
-            )
-        if self.online_c128_mtp.enabled():
-            raise NotImplementedError(
-                "DSV4 ragged verify does not support online c128 MTP; "
-                "set SGLANG_RAGGED_VERIFY_MODE off or disable online compress."
             )
         if layout.verify_lens_cpu is not None:
             assert int(layout.verify_lens.min()) >= 1
