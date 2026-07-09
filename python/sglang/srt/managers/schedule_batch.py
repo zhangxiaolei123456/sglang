@@ -2469,6 +2469,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         return total
 
     def check_decode_mem(self, selected_indices: Optional[List[int]] = None):
+        if selected_indices is None:
+            # Reclaim active requests' out-of-window SWA pages before judging
+            # decode memory pressure. Otherwise SWA can look full until
+            # alloc_for_decode() runs, causing unnecessary retraction.
+            self.maybe_evict_swa()
         num_tokens = self.new_tokens_required_next_decode(selected_indices)
         evict_from_tree_cache(self.tree_cache, num_tokens)
         return self.token_to_kv_pool_allocator.available_size() >= num_tokens
