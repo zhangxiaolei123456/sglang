@@ -11,6 +11,7 @@ from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.mem_cache.common import (
     alloc_paged_token_slots_extend,
     alloc_token_slots,
+    evict_from_tree_cache,
     get_last_loc,
 )
 from sglang.srt.server_args import get_global_server_args
@@ -144,10 +145,19 @@ class DFlashDraftInputV2(SpecInput):
                 f"DFLASH invalid speculative_num_draft_tokens={block_size}."
             )
         page_size = batch.token_to_kv_pool_allocator.page_size
+        allocator = batch.token_to_kv_pool_allocator
+        use_swa_aware_reserve = (
+            page_size > 1
+            and hasattr(allocator, "alloc_full_extend")
+            and hasattr(allocator, "alloc_swa_for_tokens")
+        )
         nxt_kv_lens_cpu_t = self._prepare_nxt_kv_lens_cpu_buf[:bs]
         committed_seq_lens_sum = 0
         reserved_seq_lens_sum = 0
         num_needed_tokens = 0
+        swa_cur_kv_lens_cpu = []
+        swa_nxt_kv_lens_cpu = []
+        num_swa_needed_tokens = 0
         max_top_k = 1
         uniform_top_k_value = None
         uniform_top_k = True
@@ -156,15 +166,26 @@ class DFlashDraftInputV2(SpecInput):
             # Read the allocation watermark from the req object like EAGLE.
             cur_alloc_len = int(req.kv_allocated_len)
             reserved_len = max(cur_alloc_len, committed_len + 2 * block_size)
+            # Full KV keeps the double-buffer headroom above. SWA only needs the
+            # current verify block because older pages are window-evicted and
+            # farther future pages are not read by this forward.
+            swa_cur_alloc_len = int(getattr(req, "swa_kv_allocated_len", cur_alloc_len))
+            swa_reserved_len = max(
+                swa_cur_alloc_len,
+                min(reserved_len, committed_len + block_size),
+            )
             top_k = int(req.sampling_params.top_k)
 
             batch_seq_lens_cpu_t[i] = committed_len
             cur_kv_lens_cpu_t[i] = cur_alloc_len
             nxt_kv_lens_cpu_t[i] = reserved_len
+            swa_cur_kv_lens_cpu.append(swa_cur_alloc_len)
+            swa_nxt_kv_lens_cpu.append(swa_reserved_len)
 
             committed_seq_lens_sum += committed_len
             reserved_seq_lens_sum += reserved_len
             num_needed_tokens += reserved_len - cur_alloc_len
+            num_swa_needed_tokens += max(0, swa_reserved_len - swa_cur_alloc_len)
 
             if top_k > max_top_k:
                 max_top_k = top_k
@@ -172,6 +193,36 @@ class DFlashDraftInputV2(SpecInput):
                 uniform_top_k_value = top_k
             elif uniform_top_k and top_k != uniform_top_k_value:
                 uniform_top_k = False
+
+        if use_swa_aware_reserve:
+            batch.maybe_evict_swa()
+            num_full_pages = 0
+            num_swa_pages = 0
+            for i in range(bs):
+                num_full_pages += (
+                    (int(nxt_kv_lens_cpu_t[i]) + page_size - 1) // page_size
+                    - (int(cur_kv_lens_cpu_t[i]) + page_size - 1) // page_size
+                )
+                num_swa_pages += (
+                    (swa_nxt_kv_lens_cpu[i] + page_size - 1) // page_size
+                    - (swa_cur_kv_lens_cpu[i] + page_size - 1) // page_size
+                )
+            num_full_needed_tokens = num_full_pages * page_size
+            num_swa_needed_page_tokens = num_swa_pages * page_size
+            evict_from_tree_cache(
+                batch.tree_cache,
+                max(num_full_needed_tokens, num_swa_needed_page_tokens),
+            )
+            if num_full_needed_tokens > allocator.full_only_available_size():
+                raise RuntimeError(
+                    "DFLASH full KV allocation failed during SWA-aware decode "
+                    "reserve: insufficient full KV pages."
+                )
+            if num_swa_needed_page_tokens > allocator.swa_available_size():
+                raise RuntimeError(
+                    "DFLASH SWA KV allocation failed during SWA-aware decode "
+                    "reserve: insufficient SWA KV pages."
+                )
 
         self.max_top_k = max(max_top_k, 1)
         self.uniform_top_k_value = uniform_top_k_value if uniform_top_k else None
@@ -197,6 +248,25 @@ class DFlashDraftInputV2(SpecInput):
                     out_cache_loc = alloc_token_slots(
                         batch.tree_cache, num_needed_tokens
                     )
+                elif use_swa_aware_reserve:
+                    last_loc = get_last_loc(
+                        batch.req_to_token_pool.req_to_token,
+                        batch.req_pool_indices,
+                        cur_kv_lens,
+                    )
+                    out_cache_loc = allocator.alloc_full_extend(
+                        cur_kv_lens,
+                        cur_kv_lens_cpu_t,
+                        nxt_kv_lens,
+                        nxt_kv_lens_cpu_t,
+                        last_loc,
+                        num_needed_tokens,
+                    )
+                    if out_cache_loc is None:
+                        raise RuntimeError(
+                            "DFLASH full KV allocation failed during SWA-aware "
+                            "decode reserve."
+                        )
                 else:
                     last_loc = get_last_loc(
                         batch.req_to_token_pool.req_to_token,
@@ -223,6 +293,23 @@ class DFlashDraftInputV2(SpecInput):
                     out_cache_loc,
                     bs,
                 )
+
+            if use_swa_aware_reserve and num_swa_needed_tokens > 0:
+                swa_full_indices = []
+                req_to_token = batch.req_to_token_pool.req_to_token
+                for i in range(bs):
+                    start = swa_cur_kv_lens_cpu[i]
+                    end = swa_nxt_kv_lens_cpu[i]
+                    if end > start:
+                        swa_full_indices.append(
+                            req_to_token[batch.req_pool_indices[i], start:end]
+                        )
+                if swa_full_indices:
+                    if not allocator.alloc_swa_for_tokens(torch.cat(swa_full_indices)):
+                        raise RuntimeError(
+                            "DFLASH SWA KV allocation failed during SWA-aware "
+                            "decode reserve."
+                        )
         if caller_stream is not None:
             # Enqueue the dependency on the caller's stream, not inside the
             # plan-stream context, so forward work cannot observe partially
@@ -233,6 +320,11 @@ class DFlashDraftInputV2(SpecInput):
         # reclaim any DFLASH over-allocation if the request finishes later.
         for i, req in enumerate(batch.reqs):
             req.kv_allocated_len = max(req.kv_allocated_len, int(nxt_kv_lens_cpu_t[i]))
+            if use_swa_aware_reserve:
+                req.swa_kv_allocated_len = max(
+                    int(getattr(req, "swa_kv_allocated_len", 0)),
+                    swa_nxt_kv_lens_cpu[i],
+                )
 
         # Seed committed; overlap's resolve overwrites it with the published value.
         batch.seq_lens_cpu = batch_seq_lens_cpu_t
